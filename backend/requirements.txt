@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+websockets
+pydantic
+python-multipart
+motor
+pymongo
+torch
+numpy
+gymnasium
+matplotlib
+scikit-learn
+python-dotenv
+pillow
+pandas
