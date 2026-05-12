@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import io
 import base64
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -17,6 +18,7 @@ from pydantic import BaseModel
 # Import our modules
 from env import SimpleEnvironment, MediumEnvironment, ComplexEnvironment, DynamicEnvironment
 from agents import MAPPOTrainer
+from agents.heterogeneous_trainer import HeterogeneousTrainer
 from memory import RAGMemory, LLMRewardShaper
 from database import MongoDBManager
 
@@ -39,6 +41,10 @@ rag_memories = {}
 reward_shapers = {}
 db_manager = None
 
+# Results storage directory
+RESULTS_DIR = Path("./results")
+RESULTS_DIR.mkdir(exist_ok=True)
+
 # Environment registry
 ENVIRONMENTS = {
     'simple': SimpleEnvironment,
@@ -55,6 +61,8 @@ class EnvironmentConfig(BaseModel):
     gamma: float = 0.99
     use_rag: bool = True
     use_llm_shaping: bool = True
+    heterogeneous: bool = False
+    algorithms: Optional[List[str]] = None  # List of algorithm names for each agent
 
 class TrainingConfig(BaseModel):
     session_id: str
@@ -137,17 +145,34 @@ async def initialize_environment(config: EnvironmentConfig):
     # Initialize LLM reward shaper if enabled
     reward_shaper = LLMRewardShaper(use_simulation=True) if config.use_llm_shaping else None
     
-    # Initialize MAPPO trainer with fixed obs_dim=8 (feature vector representation)
-    # Observation features: [agent_x, agent_y, goal_x, goal_y, nearest_obstacle_dist, nearest_agent_dist, collision_flag, remaining_steps]
-    trainer = MAPPOTrainer(
-        env=env,
-        num_agents=env.num_agents,
-        obs_dim=8,  # Fixed 8-dimensional feature vector
-        action_dim=5,  # Up, Down, Left, Right, Stay
-        lr=config.learning_rate,
-        gamma=config.gamma,
-        device='cuda' if torch.cuda.is_available() else 'cpu'
-    )
+    # Initialize trainer (heterogeneous or standard MAPPO)
+    if config.heterogeneous and config.algorithms:
+        # Use heterogeneous trainer with different algorithms
+        algorithm_config = config.algorithms[:env.num_agents]  # Ensure we have enough algorithms
+        while len(algorithm_config) < env.num_agents:
+            algorithm_config.append('mappo')  # Default to MAPPO for remaining agents
+        
+        trainer = HeterogeneousTrainer(
+            env=env,
+            num_agents=env.num_agents,
+            obs_dim=8,  # Fixed 8-dimensional feature vector
+            action_dim=5,  # Up, Down, Left, Right, Stay
+            algorithm_config=algorithm_config,
+            lr=config.learning_rate,
+            gamma=config.gamma,
+            device='cuda' if torch.cuda.is_available() else 'cpu'
+        )
+    else:
+        # Use standard MAPPO trainer
+        trainer = MAPPOTrainer(
+            env=env,
+            num_agents=env.num_agents,
+            obs_dim=8,  # Fixed 8-dimensional feature vector
+            action_dim=5,  # Up, Down, Left, Right, Stay
+            lr=config.learning_rate,
+            gamma=config.gamma,
+            device='cuda' if torch.cuda.is_available() else 'cpu'
+        )
     
     # Store in global state
     environments[session_id] = env
@@ -159,13 +184,15 @@ async def initialize_environment(config: EnvironmentConfig):
         'config': config.dict(),
         'status': 'initialized',
         'created_at': datetime.now().isoformat(),
-        'current_episode': 0
+        'current_episode': 0,
+        'heterogeneous': config.heterogeneous,
+        'algorithms': config.algorithms if config.heterogeneous else None
     }
     
     # Get initial state
     obs, info = env.reset()
     
-    return {
+    response_data = {
         "session_id": session_id,
         "status": "initialized",
         "environment": {
@@ -181,6 +208,12 @@ async def initialize_environment(config: EnvironmentConfig):
             "dynamic_obstacles": env.dynamic_obstacle_positions if hasattr(env, 'dynamic_obstacle_positions') else []
         }
     }
+    
+    # Add algorithm information if heterogeneous
+    if config.heterogeneous and hasattr(trainer, 'get_algorithm_info'):
+        response_data["algorithms"] = trainer.get_algorithm_info()
+    
+    return response_data
 
 @app.post("/api/training/control")
 async def control_training(config: TrainingConfig):
@@ -217,6 +250,64 @@ def convert_to_serializable(obj):
     elif isinstance(obj, tuple):
         return [convert_to_serializable(v) for v in obj]
     return obj
+
+def save_training_results(session_id: str, trainer, config: dict, rag_stats: dict):
+    """Save training results to disk for persistent access"""
+    try:
+        results_file = RESULTS_DIR / f"{session_id}.json"
+        results_data = {
+            "session_id": session_id,
+            "config": config,
+            "rewards": convert_to_serializable(trainer.episode_rewards),
+            "episode_lengths": convert_to_serializable(trainer.episode_lengths),
+            "success_rates": convert_to_serializable(trainer.success_rates),
+            "collision_counts": convert_to_serializable(trainer.collision_counts),
+            "rag_stats": rag_stats,
+            "agent_performance": [],
+            "saved_at": datetime.now().isoformat()
+        }
+        
+        # Add algorithm information if heterogeneous
+        if hasattr(trainer, 'get_algorithm_info'):
+            results_data["algorithms"] = trainer.get_algorithm_info()
+            results_data["heterogeneous"] = True
+        else:
+            results_data["heterogeneous"] = False
+            results_data["algorithms"] = [{"agent_id": i, "algorithm": "mappo"} for i in range(trainer.num_agents)]
+        
+        # Build per-agent performance data
+        for i in range(trainer.num_agents):
+            avg_reward = float(np.mean(trainer.per_agent_rewards[i])) if trainer.per_agent_rewards[i] else 0
+            success_rate = float(np.mean(trainer.per_agent_success[i])) if trainer.per_agent_success[i] else 0
+            total_collisions = int(sum(trainer.per_agent_collisions[i])) if trainer.per_agent_collisions[i] else 0
+            agent_perf = {
+                "agentId": i,
+                "avgReward": avg_reward,
+                "successRate": success_rate,
+                "collisions": total_collisions
+            }
+            # Add algorithm info if available
+            if "algorithms" in results_data and i < len(results_data["algorithms"]):
+                agent_perf["algorithm"] = results_data["algorithms"][i]["algorithm"]
+            results_data["agent_performance"].append(agent_perf)
+        
+        with open(results_file, 'w') as f:
+            json.dump(results_data, f, indent=2)
+        print(f"Training results saved to {results_file}")
+    except Exception as e:
+        print(f"Error saving training results: {e}")
+
+def load_training_results(session_id: str):
+    """Load training results from disk"""
+    try:
+        results_file = RESULTS_DIR / f"{session_id}.json"
+        if results_file.exists():
+            with open(results_file, 'r') as f:
+                return json.load(f)
+        return None
+    except Exception as e:
+        print(f"Error loading training results: {e}")
+        return None
 
 
 @app.websocket("/ws/training/{session_id}")
@@ -265,6 +356,10 @@ async def training_websocket(websocket: WebSocket, session_id: str):
                 await asyncio.sleep(0.1)
                 continue
             
+            # Ensure session status is 'training' (handle race condition on first connect)
+            if active_sessions[session_id]['status'] == 'initialized':
+                active_sessions[session_id]['status'] = 'training'
+
             # Run episode with error handling
             try:
                 print("Resetting environment...")
@@ -284,10 +379,18 @@ async def training_websocket(websocket: WebSocket, session_id: str):
                     log_probs = []
                     
                     print(f"Step {step_count}: Getting actions...")
-                    for i, agent in enumerate(trainer.agents):
-                        action, log_prob, _ = agent.select_action(obs[i])
-                        actions.append(action[0])
-                        log_probs.append(log_prob[0])
+                    # Handle both MAPPOTrainer and HeterogeneousTrainer
+                    if hasattr(trainer, 'select_actions'):
+                        # Heterogeneous trainer has select_actions method
+                        actions, log_probs, _ = trainer.select_actions(obs)
+                        actions = [a[0] if isinstance(a, np.ndarray) else a for a in actions]
+                        log_probs = [lp[0] if isinstance(lp, np.ndarray) else lp for lp in log_probs]
+                    else:
+                        # MAPPO trainer - iterate through agents
+                        for i, agent in enumerate(trainer.agents):
+                            action, log_prob, _ = agent.select_action(obs[i])
+                            actions.append(action[0])
+                            log_probs.append(log_prob[0])
                     print(f"Actions: {actions}")
                     
                     # Get RAG guidance if enabled and USE IT to improve rewards
@@ -403,9 +506,14 @@ async def training_websocket(websocket: WebSocket, session_id: str):
                 
                 # Update agents after episode
                 update_info = {}
-                for i, agent in enumerate(trainer.agents):
-                    agent_info = agent.update()
-                    update_info[f'agent_{i}'] = agent_info
+                if hasattr(trainer, 'update'):
+                    # Heterogeneous trainer has update method
+                    update_info = trainer.update()
+                else:
+                    # MAPPO trainer - update each agent individually
+                    for i, agent in enumerate(trainer.agents):
+                        agent_info = agent.update()
+                        update_info[f'agent_{i}'] = agent_info
                 
                 # Store trajectory in RAG memory
                 if rag_memory and len(trajectory_states) > 10:
@@ -434,12 +542,14 @@ async def training_websocket(websocket: WebSocket, session_id: str):
                 trainer.collision_counts.append(episode_collisions)
                 trainer.success_rates.append(episode_success_rate)
                 
-                # Track per-agent metrics
+                # Track per-agent metrics safely
                 for i in range(env.num_agents):
-                    agent_reward = sum(shaped_rewards[i] for _ in range(step_count)) / max(step_count, 1)
-                    trainer.per_agent_rewards[i].append(agent_reward)
+                    if i < len(shaped_rewards):
+                        agent_ep_reward = float(shaped_rewards[i])
+                    else:
+                        agent_ep_reward = episode_reward / max(env.num_agents, 1)
+                    trainer.per_agent_rewards[i].append(agent_ep_reward)
                     trainer.per_agent_success[i].append(1 if env.goals_reached[i] else 0)
-                    # Approximate per-agent collisions (shared for now)
                     trainer.per_agent_collisions[i].append(episode_collisions)
                 
             except Exception as episode_error:
@@ -450,29 +560,31 @@ async def training_websocket(websocket: WebSocket, session_id: str):
                 continue  # Skip to next episode instead of stopping training
             
             # Calculate overall metrics across all episodes
-            overall_avg_reward = float(np.mean(trainer.episode_rewards))
-            overall_avg_success_rate = float(np.mean(trainer.success_rates))
-            overall_total_collisions = int(sum(trainer.collision_counts))
-            overall_avg_collisions = float(np.mean(trainer.collision_counts))
-            
-            # Send episode summary
-            await websocket.send_json(convert_to_serializable({
-                'type': 'episode_complete',
-                'episode': episode,
-                'data': episode_data,
-                'metrics': {
-                    # Rolling 10-episode averages
-                    'avg_reward_10': float(np.mean(trainer.episode_rewards[-10:])) if len(trainer.episode_rewards) >= 10 else float(episode_reward),
-                    'avg_success_rate_10': float(np.mean(trainer.success_rates[-10:])) if len(trainer.success_rates) >= 10 else float(sum(env.goals_reached) / env.num_agents),
-                    'avg_collisions_10': float(np.mean(trainer.collision_counts[-10:])) if len(trainer.collision_counts) >= 10 else float(episode_collisions),
-                    # Overall metrics (all episodes)
-                    'overall_avg_reward': overall_avg_reward,
-                    'overall_avg_success_rate': overall_avg_success_rate,
-                    'overall_total_collisions': overall_total_collisions,
-                    'overall_avg_collisions': overall_avg_collisions,
-                    'episodes_completed': len(trainer.episode_rewards)
-                }
-            }))
+            overall_avg_reward = float(np.mean(trainer.episode_rewards)) if trainer.episode_rewards else 0.0
+            overall_avg_success_rate = float(np.mean(trainer.success_rates)) if trainer.success_rates else 0.0
+            overall_total_collisions = int(sum(trainer.collision_counts)) if trainer.collision_counts else 0
+            overall_avg_collisions = float(np.mean(trainer.collision_counts)) if trainer.collision_counts else 0.0
+
+            # Send episode summary — catch send errors so training doesn't abort
+            try:
+                await websocket.send_json(convert_to_serializable({
+                    'type': 'episode_complete',
+                    'episode': episode,
+                    'data': episode_data,
+                    'metrics': {
+                        'avg_reward_10': float(np.mean(trainer.episode_rewards[-10:])) if len(trainer.episode_rewards) >= 10 else float(episode_reward),
+                        'avg_success_rate_10': float(np.mean(trainer.success_rates[-10:])) if len(trainer.success_rates) >= 10 else float(sum(env.goals_reached) / env.num_agents),
+                        'avg_collisions_10': float(np.mean(trainer.collision_counts[-10:])) if len(trainer.collision_counts) >= 10 else float(episode_collisions),
+                        'overall_avg_reward': overall_avg_reward,
+                        'overall_avg_success_rate': overall_avg_success_rate,
+                        'overall_total_collisions': overall_total_collisions,
+                        'overall_avg_collisions': overall_avg_collisions,
+                        'episodes_completed': len(trainer.episode_rewards)
+                    }
+                }))
+            except Exception as send_err:
+                print(f"Warning: failed to send episode_complete for episode {episode}: {send_err}")
+                # Don't break — keep training even if one send fails
             
             active_sessions[session_id]['current_episode'] = episode
             
@@ -490,6 +602,28 @@ async def training_websocket(websocket: WebSocket, session_id: str):
         # Training complete - calculate comprehensive overall metrics
         total_reward = sum(trainer.episode_rewards) if trainer.episode_rewards else 0
         total_collisions = int(sum(trainer.collision_counts)) if trainer.collision_counts else 0
+        
+        # Get RAG stats for saving
+        rag_memory = rag_memories.get(session_id)
+        if rag_memory:
+            raw_stats = rag_memory.get_stats()
+            rag_stats = {
+                "totalQueries": raw_stats.get('trajectory_queries', 0) + raw_stats.get('collision_queries', 0) + 
+                              raw_stats.get('success_queries', 0) + raw_stats.get('experience_queries', 0),
+                "successfulRetrievals": raw_stats.get('successful_retrievals', 0),
+                "retrievalSuccessRate": raw_stats.get('retrieval_success_rate', 0),
+                "totalMemories": raw_stats.get('total_memories', 0)
+            }
+        else:
+            rag_stats = {
+                "totalQueries": 0,
+                "successfulRetrievals": 0,
+                "retrievalSuccessRate": 0,
+                "totalMemories": 0
+            }
+        
+        # Save training results to disk for persistent access
+        save_training_results(session_id, trainer, config, rag_stats)
         
         await websocket.send_json(convert_to_serializable({
             'type': 'training_complete',
@@ -538,56 +672,63 @@ async def training_websocket(websocket: WebSocket, session_id: str):
 @app.get("/api/training/stats/{session_id}")
 async def get_training_stats(session_id: str):
     """Get training statistics"""
-    if session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    trainer = trainers.get(session_id)
-    if not trainer:
-        return {"error": "Trainer not found"}
-    
-    # Get RAG stats if available (convert snake_case to camelCase for frontend)
-    rag_memory = rag_memories.get(session_id)
-    if rag_memory:
-        raw_stats = rag_memory.get_stats()
-        rag_stats = {
-            "totalQueries": raw_stats.get('trajectory_queries', 0) + raw_stats.get('collision_queries', 0) + 
-                          raw_stats.get('success_queries', 0) + raw_stats.get('experience_queries', 0),
-            "successfulRetrievals": raw_stats.get('successful_retrievals', 0),
-            "retrievalSuccessRate": raw_stats.get('retrieval_success_rate', 0),
-            "totalMemories": raw_stats.get('total_memories', 0)
+    # First try to get from memory (active session)
+    if session_id in active_sessions:
+        trainer = trainers.get(session_id)
+        if not trainer:
+            return {"error": "Trainer not found"}
+        
+        # Get RAG stats if available (convert snake_case to camelCase for frontend)
+        rag_memory = rag_memories.get(session_id)
+        if rag_memory:
+            raw_stats = rag_memory.get_stats()
+            rag_stats = {
+                "totalQueries": raw_stats.get('trajectory_queries', 0) + raw_stats.get('collision_queries', 0) + 
+                              raw_stats.get('success_queries', 0) + raw_stats.get('experience_queries', 0),
+                "successfulRetrievals": raw_stats.get('successful_retrievals', 0),
+                "retrievalSuccessRate": raw_stats.get('retrieval_success_rate', 0),
+                "totalMemories": raw_stats.get('total_memories', 0)
+            }
+        else:
+            rag_stats = {
+                "totalQueries": 0,
+                "successfulRetrievals": 0,
+                "retrievalSuccessRate": 0,
+                "totalMemories": 0
+            }
+        
+        # Build per-agent performance data
+        agent_performance = []
+        for i in range(trainer.num_agents):
+            avg_reward = float(np.mean(trainer.per_agent_rewards[i])) if trainer.per_agent_rewards[i] else 0
+            success_rate = float(np.mean(trainer.per_agent_success[i])) if trainer.per_agent_success[i] else 0
+            total_collisions = int(sum(trainer.per_agent_collisions[i])) if trainer.per_agent_collisions[i] else 0
+            agent_performance.append({
+                "agentId": i,
+                "avgReward": avg_reward,
+                "successRate": success_rate,
+                "collisions": total_collisions
+            })
+        
+        return {
+            "session_id": session_id,
+            "current_episode": active_sessions[session_id]['current_episode'],
+            "status": active_sessions[session_id]['status'],
+            "rewards": trainer.episode_rewards,
+            "episode_lengths": trainer.episode_lengths,
+            "success_rates": trainer.success_rates,
+            "collision_counts": trainer.collision_counts,
+            "rag_stats": rag_stats,
+            "agent_performance": agent_performance
         }
-    else:
-        rag_stats = {
-            "totalQueries": 0,
-            "successfulRetrievals": 0,
-            "retrievalSuccessRate": 0,
-            "totalMemories": 0
-        }
     
-    # Build per-agent performance data
-    agent_performance = []
-    for i in range(trainer.num_agents):
-        avg_reward = float(np.mean(trainer.per_agent_rewards[i])) if trainer.per_agent_rewards[i] else 0
-        success_rate = float(np.mean(trainer.per_agent_success[i])) if trainer.per_agent_success[i] else 0
-        total_collisions = int(sum(trainer.per_agent_collisions[i])) if trainer.per_agent_collisions[i] else 0
-        agent_performance.append({
-            "agentId": i,
-            "avgReward": avg_reward,
-            "successRate": success_rate,
-            "collisions": total_collisions
-        })
+    # If not in memory, try to load from disk
+    saved_results = load_training_results(session_id)
+    if saved_results:
+        return saved_results
     
-    return {
-        "session_id": session_id,
-        "current_episode": active_sessions[session_id]['current_episode'],
-        "status": active_sessions[session_id]['status'],
-        "rewards": trainer.episode_rewards,
-        "episode_lengths": trainer.episode_lengths,
-        "success_rates": trainer.success_rates,
-        "collision_counts": trainer.collision_counts,
-        "rag_stats": rag_stats,
-        "agent_performance": agent_performance
-    }
+    # If not found anywhere
+    raise HTTPException(status_code=404, detail="Session not found and no saved results")
 
 @app.get("/api/rag/stats/{session_id}")
 async def get_rag_stats(session_id: str):
