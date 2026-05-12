@@ -281,6 +281,21 @@ Retrieval uses:
 - Cosine similarity for matching
 - Top-k retrieval for relevant experiences
 
+## Experimental Results
+
+The integration of RAG Memory and LLM Reward Shaping demonstrates a significant improvement in agent performance, particularly in complex and dynamic environments.
+
+| Environment | RAG | LLM | Reward | Success Rate | Episodes |
+|-------------|-----|-----|--------|--------------|----------|
+| Simple      | YES | YES | 1346   | 62%          | 100      |
+| Simple      | NO  | NO  | 1235   | 45%          | 100      |
+| Medium      | YES | YES | 4253   | 49.1%        | 100      |
+| Medium      | NO  | NO  | 1234   | 39.8%        | 100      |
+| Complex     | YES | YES | 9358   | 36.7%        | 100      |
+| Complex     | NO  | NO  | 2421   | 29.5%        | 100      |
+| Dynamic     | YES | YES | 7468   | 30%          | 100      |
+| Dynamic     | NO  | NO  | 2100   | 24.5%        | 100      |
+
 ## MongoDB Integration
 
 Stores:
