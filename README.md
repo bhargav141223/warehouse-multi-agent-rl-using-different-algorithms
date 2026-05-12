@@ -4,6 +4,18 @@
 
 A comprehensive full-stack application for multi-agent warehouse navigation using Multi-Agent Proximal Policy Optimization (MAPPO) with support for heterogeneous training (different algorithms for different agents), Large Language Model (LLM) reward shaping, and Retrieval-Augmented Generation (RAG) memory.
 
+## Team
+
+**TEAM-15**
+
+- **K BHARGAV REDDY** (AID23028) - bl.en.u4aid23028@bl.students.amrita.edu
+- **N VISWA VARDHAN REDDY** (AID23035) - bl.en.u4aid23035@bl.students.amrita.edu
+- **B SAI SRI GOUTHAM** (AID23066) - bl.en.u4aid23066@bl.students.amrita.edu
+
+## GitHub Repository
+
+https://github.com/bhargav141223/warehouse-multi-agent-rl-using-different-algorithms
+
 ## Features
 
 ### Core Algorithm
