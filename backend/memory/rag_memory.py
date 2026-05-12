@@ -381,14 +381,20 @@ class RAGMemory:
     def get_stats(self) -> Dict:
         """Get memory access statistics"""
         total_queries = (
-            self.access_stats['trajectory_queries'] +
-            self.access_stats['collision_queries'] +
-            self.access_stats['success_queries'] +
-            self.access_stats['experience_queries']
+            self.access_stats.get('trajectory_queries', 0) +
+            self.access_stats.get('collision_queries', 0) +
+            self.access_stats.get('success_queries', 0) +
+            self.access_stats.get('experience_queries', 0)
         )
         
-        return {
-            **self.access_stats,
+        successful_retrievals = self.access_stats.get('successful_retrievals', 0)
+        
+        stats = {
+            'trajectory_queries': self.access_stats.get('trajectory_queries', 0),
+            'collision_queries': self.access_stats.get('collision_queries', 0),
+            'success_queries': self.access_stats.get('success_queries', 0),
+            'experience_queries': self.access_stats.get('experience_queries', 0),
+            'successful_retrievals': successful_retrievals,
             'total_memories': (
                 len(self.trajectory_store.metadata) +
                 len(self.collision_store.metadata) +
@@ -396,9 +402,11 @@ class RAGMemory:
                 len(self.experience_store.metadata)
             ),
             'retrieval_success_rate': (
-                self.access_stats['successful_retrievals'] / max(total_queries, 1)
-            )
+                successful_retrievals / max(total_queries, 1)
+            ) if total_queries > 0 else 0.0
         }
+        
+        return stats
     
     def clear_all_memories(self):
         """Clear all memory stores"""

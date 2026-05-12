@@ -1,13 +1,18 @@
 # Multi-Agent Warehouse Navigation System
 
-## MAPPO + LLM Reward Shaping + RAG Memory
+## MAPPO + Heterogeneous Training + LLM Reward Shaping + RAG Memory
 
-A comprehensive full-stack application for multi-agent warehouse navigation using Multi-Agent Proximal Policy Optimization (MAPPO) with Large Language Model (LLM) reward shaping and Retrieval-Augmented Generation (RAG) memory.
+A comprehensive full-stack application for multi-agent warehouse navigation using Multi-Agent Proximal Policy Optimization (MAPPO) with support for heterogeneous training (different algorithms for different agents), Large Language Model (LLM) reward shaping, and Retrieval-Augmented Generation (RAG) memory.
 
 ## Features
 
 ### Core Algorithm
+- **Heterogeneous Multi-Agent Training**: Train agents with different algorithms (MAPPO, DQN, A2C, PPO, SAC)
 - **MAPPO (Multi-Agent PPO)**: Multi-agent reinforcement learning with centralized critic
+- **DQN (Deep Q-Network)**: Value-based learning with experience replay
+- **A2C (Advantage Actor-Critic)**: Synchronous actor-critic with advantage estimation
+- **PPO (Proximal Policy Optimization)**: Independent PPO for individual agents
+- **SAC (Soft Actor-Critic)**: Maximum entropy reinforcement learning
 - **LLM Reward Shaping**: Intelligent reward feedback for better navigation decisions
 - **RAG Memory**: Store and retrieve successful trajectories and collision avoidance patterns
 - **Real-time Training**: Live visualization of agent movements and training metrics
@@ -57,8 +62,13 @@ warehouse-navigation/
 │   │   ├── medium_env.py      # Medium environment
 │   │   ├── complex_env.py     # Complex environment
 │   │   └── dynamic_env.py     # Dynamic environment
-│   ├── agents/                # MAPPO implementation
+│   ├── agents/                # RL algorithm implementations
 │   │   ├── mappo.py          # MAPPO trainer & agents
+│   │   ├── dqn_agent.py      # DQN agent implementation
+│   │   ├── a2c_agent.py      # A2C agent implementation
+│   │   ├── ppo_agent.py      # Independent PPO agent
+│   │   ├── sac_agent.py      # SAC agent implementation
+│   │   ├── heterogeneous_trainer.py  # Heterogeneous training manager
 │   │   └── networks.py        # Actor-Critic networks
 │   ├── memory/                # RAG & LLM modules
 │   │   ├── rag_memory.py      # RAG memory implementation
@@ -164,6 +174,7 @@ Once both servers are running:
    - Choose one of 4 environments (Simple, Medium, Complex, Dynamic)
    - Configure training parameters (episodes, learning rate, etc.)
    - Enable/disable RAG memory and LLM reward shaping
+   - **NEW**: Enable heterogeneous training and select algorithms for each agent
    - Click "Initialize & Start"
 
 3. **Training Dashboard**:
@@ -188,6 +199,40 @@ Once both servers are running:
 - **PPO Clipping**: Prevents large policy updates
 - **GAE (Generalized Advantage Estimation)**: Reduces variance in advantage estimation
 - **Entropy Regularization**: Encourages exploration
+
+## Heterogeneous Training
+
+### Supported Algorithms
+- **MAPPO**: Multi-agent PPO with centralized critic (best for coordination)
+- **DQN**: Deep Q-Network with experience replay (value-based, off-policy)
+- **A2C**: Advantage Actor-Critic (synchronous, on-policy)
+- **PPO**: Independent PPO (decentralized, on-policy)
+- **SAC**: Soft Actor-Critic (maximum entropy, off-policy)
+
+### How to Use Heterogeneous Training
+
+When initializing training, set `heterogeneous: true` and provide algorithm assignments:
+
+```json
+{
+  "heterogeneous": true,
+  "algorithms": ["mappo", "dqn", "a2c", "ppo"]
+}
+```
+
+This assigns:
+- Agent 0: MAPPO
+- Agent 1: DQN
+- Agent 2: A2C
+- Agent 3: PPO
+
+You can use any combination of algorithms including SAC.
+
+### Benefits of Heterogeneous Training
+- Algorithm diversity for robust performance
+- Compare different algorithms in same environment
+- Leverage strengths of each algorithm
+- More flexible experimental setup
 
 ### Actions
 - 0: Up
@@ -236,7 +281,16 @@ Stores:
 
 ### Environment Management
 - `GET /api/environments` - List available environments
-- `POST /api/environment/initialize` - Initialize training session
+- `POST /api/environment/initialize` - Initialize training session (supports heterogeneous training)
+  - Parameters:
+    - `environment_type`: Environment name (simple, medium, complex, dynamic)
+    - `num_episodes`: Number of training episodes
+    - `learning_rate`: Learning rate for optimization
+    - `gamma`: Discount factor
+    - `use_rag`: Enable RAG memory
+    - `use_llm_shaping`: Enable LLM reward shaping
+    - `heterogeneous`: Enable heterogeneous training (boolean)
+    - `algorithms`: List of algorithms for each agent (e.g., ["mappo", "dqn", "a2c", "ppo"])
 
 ### Training Control
 - `POST /api/training/control` - Start/pause/stop training
@@ -316,6 +370,13 @@ npm run dev -- --port 3001
 2. Inherit from `WarehouseEnvironment`
 3. Override `_initialize_positions()` for custom layouts
 4. Add to `ENVIRONMENTS` dict in `app.py`
+
+### Adding New Algorithms
+
+1. Create new agent file in `backend/agents/` (e.g., `new_algorithm_agent.py`)
+2. Implement required methods: `select_action()`, `store_transition()`, `update()`, `save()`, `load()`
+3. Add to `HeterogeneousTrainer` in `heterogeneous_trainer.py`
+4. Add algorithm name to supported algorithms list
 
 ### Customizing Reward Function
 

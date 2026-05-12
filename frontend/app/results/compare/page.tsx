@@ -70,7 +70,11 @@ export default function CompareResultsPage() {
       const stored = localStorage.getItem('training_results')
       if (stored) {
         const parsed = JSON.parse(stored)
-        setResults(parsed)
+        // Filter out old results that don't have proper RAG/LLM flags
+        const filtered = parsed.filter((r: any) => r.config && 'useRag' in r.config && 'useLlm' in r.config)
+        setResults(filtered)
+        // Update localStorage with filtered results
+        localStorage.setItem('training_results', JSON.stringify(filtered))
       }
       setLoading(false)
     } catch (error) {
@@ -113,8 +117,8 @@ export default function CompareResultsPage() {
         numEpisodes: config.num_episodes || 100,
         learningRate: config.learning_rate || 0.0003,
         gamma: config.gamma || 0.99,
-        useRag: config.use_rag ?? true,
-        useLlm: config.use_llm ?? true,
+        useRag: config.use_rag ?? false,
+        useLlm: config.use_llm_shaping ?? false,
         gridSize: config.grid_size || 8,
         numAgents: config.num_agents || 2,
         numObstacles: config.num_obstacles || 0,

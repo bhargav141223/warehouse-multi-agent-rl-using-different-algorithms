@@ -97,22 +97,25 @@ export default function ResultsPage() {
       const now = new Date()
       const sessionInfo = JSON.parse(localStorage.getItem('currentSession') || '{}')
       
+      // Use the API data config directly, fallback to sessionInfo if not available
+      const config = apiData.config || sessionInfo.config || {}
+      
       const storedResult = {
         sessionId,
         timestamp: now.toISOString(),
         date: now.toLocaleDateString(),
         time: now.toLocaleTimeString(),
-        environmentType: sessionInfo.environmentType || 'unknown',
+        environmentType: config.environment_type || sessionInfo.environmentType || 'unknown',
         config: {
           numEpisodes: resultData.totalEpisodes,
-          learningRate: 0.0003,
-          gamma: 0.99,
-          useRag: true,
-          useLlm: true,
-          gridSize: sessionInfo.config?.grid_size || 8,
-          numAgents: sessionInfo.config?.num_agents || 2,
-          numObstacles: sessionInfo.config?.num_obstacles || 0,
-          hasDynamicObstacles: sessionInfo.config?.has_dynamic_obstacles || false
+          learningRate: config.learning_rate || 0.0003,
+          gamma: config.gamma || 0.99,
+          useRag: config.use_rag ?? false,
+          useLlm: config.use_llm_shaping ?? false,
+          gridSize: config.grid_size || 8,
+          numAgents: config.num_agents || 2,
+          numObstacles: config.num_obstacles || 0,
+          hasDynamicObstacles: config.has_dynamic_obstacles || false
         },
         metrics: {
           totalEpisodes: resultData.totalEpisodes,

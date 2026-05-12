@@ -315,7 +315,8 @@ class WarehouseEnvironment(gym.Env):
     def _get_info(self) -> Dict:
         """Get additional information with success tracking"""
         # Calculate success rate (proportion of agents that reached goals)
-        success_rate = sum(self.goals_reached) / self.num_agents if self.num_agents > 0 else 0
+        # Clamp to [0, 1] to ensure it doesn't exceed 100%
+        success_rate = min(max(sum(self.goals_reached) / self.num_agents if self.num_agents > 0 else 0, 0), 1.0)
         
         # Full success = all agents reached their goals
         full_success = all(self.goals_reached)
@@ -326,7 +327,7 @@ class WarehouseEnvironment(gym.Env):
             'goals_reached': sum(self.goals_reached),
             'total_goals': self.num_agents,
             'episode_reward': sum(self.episode_rewards),
-            'success_rate': success_rate,  # Explicit success rate
+            'success_rate': success_rate,  # Explicit success rate (0-1)
             'full_success': full_success,   # All goals reached
             'agent_positions': self.agent_positions,
             'goal_positions': self.goal_positions,

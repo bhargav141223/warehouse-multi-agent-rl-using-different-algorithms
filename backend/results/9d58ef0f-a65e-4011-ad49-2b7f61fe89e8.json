@@ -1,0 +1,93 @@
+{
+  "session_id": "9d58ef0f-a65e-4011-ad49-2b7f61fe89e8",
+  "config": {
+    "environment_type": "simple",
+    "num_episodes": 10,
+    "learning_rate": 0.0003,
+    "gamma": 0.99,
+    "use_rag": true,
+    "use_llm_shaping": true,
+    "heterogeneous": false,
+    "algorithms": null
+  },
+  "rewards": [
+    669.0,
+    352.5,
+    451.5,
+    239.49999999999997,
+    422.5,
+    485.0,
+    433.46666666666664,
+    734.5,
+    631.0
+  ],
+  "episode_lengths": [
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    48,
+    50
+  ],
+  "success_rates": [
+    0.5,
+    0.0,
+    0.5,
+    0.0,
+    0.0,
+    0.5,
+    0.5,
+    1.0,
+    0.5
+  ],
+  "collision_counts": [
+    0,
+    4,
+    7,
+    0,
+    0,
+    2,
+    0,
+    0,
+    4
+  ],
+  "rag_stats": {
+    "totalQueries": 896,
+    "successfulRetrievals": 1344,
+    "retrievalSuccessRate": 1.5,
+    "totalMemories": 3115
+  },
+  "use_rag": true,
+  "use_llm_shaping": true,
+  "agent_performance": [
+    {
+      "agentId": 0,
+      "avgReward": 5.111111111111111,
+      "successRate": 0.3333333333333333,
+      "collisions": 17,
+      "algorithm": "mappo"
+    },
+    {
+      "agentId": 1,
+      "avgReward": 12.222222222222221,
+      "successRate": 0.4444444444444444,
+      "collisions": 17,
+      "algorithm": "mappo"
+    }
+  ],
+  "saved_at": "2026-05-12T23:35:27.648454",
+  "heterogeneous": false,
+  "algorithms": [
+    {
+      "agent_id": 0,
+      "algorithm": "mappo"
+    },
+    {
+      "agent_id": 1,
+      "algorithm": "mappo"
+    }
+  ]
+}
